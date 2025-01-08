@@ -1,0 +1,21 @@
+[
+  {
+    "arguments": [
+      "/home/john/.local/arm/bin/arm-none-eabi-gcc",
+      "-mcpu=cortex-m4",
+      "-mthumb",
+      "-O0",
+      "-fno-common",
+      "-Wall",
+      "-Werror",
+      "-Wextra",
+      "-c",
+      "-o",
+      "fw.o",
+      "fw.c"
+    ],
+    "directory": "/home/john/documents/armbian/bsp/.src/linux/drivers/gpu/arm/bifrost/csfparser/shell",
+    "file": "/home/john/documents/armbian/bsp/.src/linux/drivers/gpu/arm/bifrost/csfparser/shell/fw.c",
+    "output": "/home/john/documents/armbian/bsp/.src/linux/drivers/gpu/arm/bifrost/csfparser/shell/fw.o"
+  }
+]

@@ -1,0 +1,5 @@
+menu "MCU Hacker Module"
+config MCU_HACKER
+ tristate "MCU Hacker Module"
+ default m
+endmenu
