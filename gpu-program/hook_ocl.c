@@ -2,23 +2,16 @@
 #include <stdio.h>
 #include <dlfcn.h>
 #include <CL/cl.h>
-#include <time.h>
 #include <setjmp.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <linux/ioctl.h>
 #include <assert.h>
-#include <time.h>
-#include "v2p.h"
-#include "crypto.c"
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
 
-#define HOOK_STR "* [OPENCL_HOOK] "
-
-#ifdef HACK
-static char* mode_str = "[Hack]";
-#else
-static char* mode_str = "[Normal]";
-#endif
+#define HOOK_STR "* [MoleAttack] "
 
 // #define TEST
 #ifdef TEST
@@ -43,16 +36,7 @@ static void dump_memory(uint64_t* addr, int size) {
 #define DEVICE_PATH "/dev/MCU_HACKER_device"
 
 static pid_t pid;
-double ocl_w_buf_time, mcu_r_buf_time, strongbox_in_time, strongbox_ex_time;
-static struct timespec strongbox_start, strongbox_end;
-static struct timespec total_start, total_end;
-static struct timespec start, end;
-
-static double time_milliseconds(struct timespec start, struct timespec end) {
-	long seconds = end.tv_sec - start.tv_sec;
-    long nanoseconds = end.tv_nsec - start.tv_nsec;
-    return seconds * 1000.0 + nanoseconds / 1000000.0;
-}
+static size_t total_size;
 
 typedef struct GPU_BUFFER {
 	uint64_t base;
@@ -83,10 +67,7 @@ static int i_input_buf;
 static GPU_BUFFER output_buf[4096];
 static int i_output_buf;
 
-static char logmsg[1024*1024];
-
 static void load_functions() __attribute__ ((constructor (666)));
-static void save_logmsg() __attribute__ ((destructor (888)));
 
 static cl_command_queue (*real_clCreateCommandQueue)(
 	cl_context, cl_device_id, cl_command_queue_properties, cl_int *);
@@ -104,8 +85,6 @@ static int load_flag = 0;
 
 static void load_functions()
 {
-	clock_gettime(CLOCK_MONOTONIC, &total_start);
-
 	pid = getpid();
 	real_clCreateCommandQueue = dlsym(RTLD_NEXT, "clCreateCommandQueue");
 	real_clCreateBuffer = dlsym(RTLD_NEXT, "clCreateBuffer");
@@ -113,44 +92,6 @@ static void load_functions()
 	real_clEnqueueWriteBuffer = dlsym(RTLD_NEXT, "clEnqueueWriteBuffer");
 
 	load_flag = 1;
-}
-
-static void save_logmsg() {
-#ifdef HACK
-	clock_gettime(CLOCK_MONOTONIC, &strongbox_start);
-	for (int i = 0 ; i < i_buf ; ++ i) {
-		if (ocl_buf[i].clean)
-			memset(buf[i].base, buf[i].size, 0);
-	}
-	clock_gettime(CLOCK_MONOTONIC, &strongbox_end);
-	strongbox_in_time += time_milliseconds(strongbox_start, strongbox_end);
-#endif
-	
-	clock_gettime(CLOCK_MONOTONIC, &total_end);
-	double total_time = time_milliseconds(total_start, total_end);
-	
-	char log_path[256];
-	sprintf(log_path, "/home/radxa/csfparser/gpu-program/hook_ocl.log");
-
-	char procname[256], cmdline[256];
-	memset(procname, sizeof(procname), 0);
-	memset(cmdline, sizeof(cmdline), 0);
-    ssize_t len;
-	len = readlink("/proc/self/exe", procname, sizeof(procname) - 1);
-	procname[len] = '\0';
-
-	FILE* cmd_file = fopen("/proc/self/cmdline", "r");
-	// len = fscanf(cmd_file, "%s", cmdline);
-	len = fread(cmdline, 1, sizeof(cmdline) - 1, cmd_file);
-	cmdline[len] = 0;
-	fclose(cmd_file);
-
-	FILE* f = fopen(log_path, "a+");
-	fprintf(f, "%s %s %s\n%lf %lf %lf %lf %lf\n", 
-		mode_str, procname, cmdline, 
-		total_time, ocl_w_buf_time, mcu_r_buf_time, strongbox_in_time, strongbox_ex_time
-	);
-	fclose(f);
 }
 
 #ifdef HACK
@@ -206,6 +147,8 @@ cl_mem clCreateBuffer(cl_context context, cl_mem_flags flags, size_t size,
 	// if (host_ptr != NULL) {
 	// 	dbg_fprintf(stdout, HOOK_STR "[NOTE] clCreateBuffer with non-null host-ptr\n");
 	// }
+	dbg_fprintf(stdout, HOOK_STR "clCreateBuffer flags: 0x%lx size: 0x%lx host_ptr: 0x%lx errcode: %d\n",
+			flags, size, host_ptr, errcode_ret ? *errcode_ret : "[NO CODE]");
 	if (cl_buf) {
 		buf[i_buf].base = cl_to_gpu(cl_buf);
 		buf[i_buf].size = size;
@@ -256,15 +199,6 @@ cl_int clEnqueueReadBuffer(cl_command_queue queue, cl_mem buffer,
 			ocl_buf[i].clean = 0;
 		}
 	}
-
-	clock_gettime(CLOCK_MONOTONIC, &strongbox_start);
-	char *cipher = malloc(size+16);
-	int cipher_len = aes_128_encrypt(base+offset, size, cipher);
-	sha256(cipher, cipher_len);
-	free(cipher);
-	clock_gettime(CLOCK_MONOTONIC, &strongbox_end);
-	strongbox_in_time += time_milliseconds(strongbox_start, strongbox_end);
-
 	// dump_memory(base, 0x100);
 	return ret;
 }
@@ -284,7 +218,6 @@ cl_int clEnqueueWriteBuffer(cl_command_queue queue, cl_mem buffer,
 			    const cl_event *event_list, cl_event *event)
 {
 	clFinish(queue);
-	clock_gettime(CLOCK_MONOTONIC, &start);
 
 	cl_int ret =
 		real_clEnqueueWriteBuffer(queue, buffer, blocking, offset, size,
@@ -296,10 +229,6 @@ cl_int clEnqueueWriteBuffer(cl_command_queue queue, cl_mem buffer,
 		"clEnqueueWriteBuffer Base: 0x%lx Size: 0x%lx Blocking: %d\n",
 		cl_to_gpu(buffer), size, blocking);
 	clFinish(queue);
-	clock_gettime(CLOCK_MONOTONIC, &end);
-	double t = 0.0;
-	t = time_milliseconds(start, end);
-	ocl_w_buf_time += t;
 
 	uint64_t base = cl_to_gpu(buffer);
 	input_buf[i_input_buf].base = base + offset;
@@ -318,25 +247,11 @@ cl_int clEnqueueWriteBuffer(cl_command_queue queue, cl_mem buffer,
 	// 			start, end, _start, _end);
 	// 	}
 	// }
-
-	clock_gettime(CLOCK_MONOTONIC, &strongbox_start);
-	char *cipher = malloc(size+16);
-	int cipher_len = aes_128_encrypt(base+offset, size, cipher);
-	clock_gettime(CLOCK_MONOTONIC, &strongbox_end);
-	strongbox_ex_time += time_milliseconds(strongbox_start, strongbox_end);
-
-	clock_gettime(CLOCK_MONOTONIC, &strongbox_start);
-	sha256(cipher, cipher_len);
-	aes_128_decrypt(cipher, cipher_len, cipher);
-	clock_gettime(CLOCK_MONOTONIC, &strongbox_end);
-	free(cipher);
-	strongbox_in_time += time_milliseconds(strongbox_start, strongbox_end);
-
 	i_input_buf++;
-
 
 	for (int i = 0; i < i_buf; ++ i) {
 		if (buf[i].base == base) {
+			if (buf[i].input == 1) fprintf(stdout, "[WARNING] Write to same buffer multiple times...\n");
 			buf[i].input = 1;
 			if (ocl_buf[i].flags | CL_MEM_USE_HOST_PTR) {
 				dbg_fprintf(stdout, "[WARNING] Write to a CL_MEM_USE_HOST_PTR buffer\n");
@@ -354,7 +269,6 @@ cl_int clEnqueueWriteBuffer(cl_command_queue queue, cl_mem buffer,
 
 	//dbg_fprintf(stdout, "[%d] fd = %d dev_name = %s i_input_buf = %d\n",
 	//	    getpid(), nfd, DEVICE_PATH, i_input_buf);
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start);
 	if (i_input_buf > 0)
 		if (ioctl(nfd, IOCTL_MCU_READ, lkm_bufs) == -1) {
 			perror("Failed to call ioctl");
@@ -362,8 +276,6 @@ cl_int clEnqueueWriteBuffer(cl_command_queue queue, cl_mem buffer,
 			return -1;
 		}
 
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
-	size_t total_size = 0;
 	for (int i = 0; i < i_input_buf; ++i) {
 		dbg_fprintf(stdout, "[%d] 0x%lx 0x%lx\n", i,
 			    lkm_bufs->bufs[i].base, lkm_bufs->bufs[i].size);
@@ -378,8 +290,6 @@ cl_int clEnqueueWriteBuffer(cl_command_queue queue, cl_mem buffer,
 	i_input_buf = 0;
 
 	free(lkm_bufs);
-	t = time_milliseconds(start, end);
-	mcu_r_buf_time += t;
 
 	// for (int i = 0 ; i < 10 ; ++ i)
 	//     dbg_fprintf(stdout, HOOK_STR "0x%x\n", *(int*)(base+i*4));
