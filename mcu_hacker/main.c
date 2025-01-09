@@ -23,7 +23,7 @@
 #include "utils.h"
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Yunjie Deng");
+MODULE_AUTHOR("MOLE");
 MODULE_DESCRIPTION("SMC CALL TEST");
 
 #define DEVICE_NAME "MCU_HACKER_device"

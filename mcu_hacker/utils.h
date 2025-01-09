@@ -1,6 +1,6 @@
 // Functions about address translation
 
-#define YUNJIE_PAGE_OFFSET ((1UL << PAGE_SHIFT) - 1)
+#define MOLE_PAGE_OFFSET ((1UL << PAGE_SHIFT) - 1)
 #define ENTRY_SHIFT 9
 #define ENTRY_MASK ((1UL << ENTRY_SHIFT) - 1)
 
@@ -93,7 +93,7 @@ uintptr_t v2p(uintptr_t va) {
         ret = -1;
     }
     else {
-        ret = (par & (~YUNJIE_PAGE_OFFSET) | (va & YUNJIE_PAGE_OFFSET));
+        ret = (par & (~MOLE_PAGE_OFFSET) | (va & MOLE_PAGE_OFFSET));
         ret &= 0x0000ffffffffffff;
     }
 
@@ -156,7 +156,7 @@ int unmapva(uintptr_t ttbr0, uintptr_t va) {
         ttbr0 = read_ttbr0_el1();
     }
 
-    level_base = ttbr0 & ~YUNJIE_PAGE_OFFSET;
+    level_base = ttbr0 & ~MOLE_PAGE_OFFSET;
     
     for (i = 0; i < 4; i++) {
         uint64_t offset = ((va >> levels[i]) & ENTRY_MASK) << 3;
@@ -168,7 +168,7 @@ int unmapva(uintptr_t ttbr0, uintptr_t va) {
 
         if ((entry & 0x3) == 0x3) { // Table Descriptor
             dbg_printk("[unmapva] Descriptor at level %d", i);
-            level_base = entry & ~YUNJIE_PAGE_OFFSET;
+            level_base = entry & ~MOLE_PAGE_OFFSET;
             if (i == 3) { // Last level
                 *entry_ptr = 0x0; // entry & 
                 flush_tlb_all();
@@ -210,7 +210,7 @@ static uintptr_t translate_va_to_pa(uintptr_t ttbr0, uintptr_t va) {
     }
     tcr = read_tcr_el1();
 
-    level_base = ttbr0 & ~YUNJIE_PAGE_OFFSET;
+    level_base = ttbr0 & ~MOLE_PAGE_OFFSET;
     
     for (i = 0; i < 4; i++) {
         uint64_t offset = ((va >> levels[i]) & ENTRY_MASK) << 3;
@@ -222,7 +222,7 @@ static uintptr_t translate_va_to_pa(uintptr_t ttbr0, uintptr_t va) {
 
         if ((entry & 0x3) == 0x3) { // Table Descriptor
             dbg_printk("[translate_va_to_pa] Descriptor at level %d", i);
-            level_base = entry & ~YUNJIE_PAGE_OFFSET;
+            level_base = entry & ~MOLE_PAGE_OFFSET;
         } else if ((entry & 0x3) == 0x1) { // Block Descriptor
             dbg_printk("[translate_va_to_pa] Block at level %d", i);
             phys_addr = (entry & ~((1UL << levels[i + 1]) - 1)) | (va & ((1UL << levels[i + 1]) - 1));
@@ -232,6 +232,6 @@ static uintptr_t translate_va_to_pa(uintptr_t ttbr0, uintptr_t va) {
         }
     }
 
-    phys_addr = level_base & 0x0000ffffffffffff | (va & YUNJIE_PAGE_OFFSET);
+    phys_addr = level_base & 0x0000ffffffffffff | (va & MOLE_PAGE_OFFSET);
     return phys_addr;
 }
